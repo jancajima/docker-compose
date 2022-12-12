@@ -1,0 +1,174 @@
+version: '3'
+
+services:
+  zookeeper:
+    container_name:
+      zookeeper_merge
+    image:
+      wurstmeister/zookeeper
+    ports:
+      - "2181:2181"
+    networks:
+      - ms-bank
+  kafka:
+    container_name:
+      kafka_merge
+    image:
+      wurstmeister/kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: DOCKER_INTERNAL:PLAINTEXT,DOCKER_EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: DOCKER_INTERNAL://:9092,DOCKER_EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: DOCKER_INTERNAL://kafka:9092,DOCKER_EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER_INTERNAL
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_BROKER_ID: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - ms-bank
+
+  config-server:
+    image: config-server
+    container_name: config-server
+    build: ./config-server
+    ports:
+      - "8888:8888"
+    networks:
+      - ms-bank
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/client-service/dev"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+  eureka-server:
+    image: eureka-server
+    container_name: eureka-server
+    build: ./eureka-server
+    ports:
+      - "8761:8761"
+    links:
+      - config-server
+    depends_on:
+      config-server:
+        condition: service_healthy
+    networks:
+      - ms-bank
+  api-gateway:
+    image: api-gateway
+    container_name: api-gateway
+    build: ./api-gateway
+    ports:
+      - "8090:8090"
+    links:
+      - config-server
+    depends_on:
+      config-server:
+        condition: service_healthy
+      eureka-server:
+        condition: service_started
+    networks:
+      - ms-bank
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    volumes:
+      - mongo-data:/data/db
+    hostname: mongodb
+    ports:
+      - "27017:27017"
+    networks:
+      - ms-bank
+  customer-service:
+    image: customer-service
+    container_name: customer-service
+    build: ./customer-service
+    links:
+      - mongodb
+    depends_on:
+      mongodb:
+        condition: service_started
+      api-gateway:
+        condition: service_started
+    networks:
+      - ms-bank
+  bank-account-service:
+    image: bank-account-service
+    container_name: bank-account-service
+    build: ./bank-account-service
+    links:
+      - mongodb
+    depends_on:
+      mongodb:
+        condition: service_started
+      api-gateway:
+        condition: service_started
+    networks:
+      - ms-bank
+  bank-credit-service:
+    image: bank-credit-service
+    container_name: bank-credit-service
+    build: ./bank-credit-service
+    links:
+      - mongodb
+    depends_on:
+      mongodb:
+        condition: service_started
+      api-gateway:
+        condition: service_started
+      kafka:
+        condition: service_started
+    networks:
+      - ms-bank
+  bank-report-service:
+    image: bank-report-service
+    container_name: bank-report-service
+    build: ./bank-report-service
+    links:
+      - mongodb
+    depends_on:
+      mongodb:
+        condition: service_started
+      api-gateway:
+        condition: service_started
+    networks:
+      - ms-bank
+  card-service:
+    image: card-service
+    container_name: card-service
+    build: ./card-service
+    links:
+      - mongodb
+    depends_on:
+      mongodb:
+        condition: service_started
+      api-gateway:
+        condition: service_started
+    networks:
+      - ms-bank
+  transaction-service:
+    image: transaction-service
+    container_name: transaction-service
+    build: ./transaction-service
+    links:
+      - mongodb
+    depends_on:
+      mongodb:
+        condition: service_started
+      api-gateway:
+        condition: service_started
+      kafka:
+        condition: service_started
+    networks:
+      - ms-bank
+
+networks:
+  ms-bank:
+    driver: bridge
+volumes:
+  mongo-data:
